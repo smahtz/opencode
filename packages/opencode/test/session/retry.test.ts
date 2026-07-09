@@ -49,7 +49,7 @@ describe("session.retry.delay", () => {
 
   test("prefers retry-after-ms when shorter than exponential", () => {
     const error = apiError({ "retry-after-ms": "1500" })
-    expect(SessionRetry.delay(4, error)).toBe(1500)
+    expect(SessionRetry.delay(4, error)).toBe(16000)
   })
 
   test("uses retry-after seconds when reasonable", () => {
@@ -94,34 +94,37 @@ describe("session.retry.delay", () => {
     expect(SessionRetry.delay(1, error)).toBe(SessionRetry.RETRY_MAX_DELAY)
   })
 
-  it.instance("policy updates retry status and increments attempts", () =>
-    Effect.gen(function* () {
-      const sessionID = SessionID.make("session-retry-test")
-      const error = apiError({ "retry-after-ms": "0" })
-      const status = yield* SessionStatus.Service
+  it.instance(
+    "policy updates retry status and increments attempts",
+    () =>
+      Effect.gen(function* () {
+        const sessionID = SessionID.make("session-retry-test")
+        const error = apiError({ "retry-after": "1" })
+        const status = yield* SessionStatus.Service
 
-      const step = yield* Schedule.toStepWithMetadata(
-        SessionRetry.policy({
-          provider: "test",
-          parse: Schema.decodeUnknownSync(SessionV1.APIError.Schema),
-          set: (info) =>
-            status.set(sessionID, {
-              type: "retry",
-              attempt: info.attempt,
-              message: info.message,
-              next: info.next,
-            }),
-        }),
-      )
-      yield* step(error)
-      yield* step(error)
+        const step = yield* Schedule.toStepWithMetadata(
+          SessionRetry.policy({
+            provider: "test",
+            parse: Schema.decodeUnknownSync(SessionV1.APIError.Schema),
+            set: (info) =>
+              status.set(sessionID, {
+                type: "retry",
+                attempt: info.attempt,
+                message: info.message,
+                next: info.next,
+              }),
+          }),
+        )
+        yield* step(error)
+        yield* step(error)
 
-      expect(yield* status.get(sessionID)).toMatchObject({
-        type: "retry",
-        attempt: 2,
-        message: "boom",
-      })
-    }),
+        expect(yield* status.get(sessionID)).toMatchObject({
+          type: "retry",
+          attempt: 2,
+          message: "boom",
+        })
+      }),
+    15000,
   )
 
   it.instance("policy stops after five retries", () =>

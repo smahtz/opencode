@@ -48,25 +48,28 @@ export function delay(attempt: number, error?: SessionV1.APIError, random = Math
   if (error) {
     const headers = error.data.responseHeaders
     if (headers) {
+      let serverMs: number | undefined
+
       const retryAfterMs = headers["retry-after-ms"]
       if (retryAfterMs) {
         const parsedMs = Number.parseFloat(retryAfterMs)
-        if (!Number.isNaN(parsedMs)) {
-          return cap(parsedMs)
+        if (Number.isFinite(parsedMs) && parsedMs > 0) {
+          serverMs = parsedMs
         }
       }
 
-      const retryAfter = headers["retry-after"]
-      if (retryAfter) {
-        const parsedSeconds = Number.parseFloat(retryAfter)
-        if (!Number.isNaN(parsedSeconds)) {
-          // convert seconds to milliseconds
-          return cap(Math.ceil(parsedSeconds * 1000))
-        }
-        // Try parsing as HTTP date format
-        const parsed = Date.parse(retryAfter) - Date.now()
-        if (!Number.isNaN(parsed) && parsed > 0) {
-          return cap(Math.ceil(parsed))
+      if (serverMs === undefined) {
+        const retryAfter = headers["retry-after"]
+        if (retryAfter) {
+          const parsedSeconds = Number.parseFloat(retryAfter)
+          if (Number.isFinite(parsedSeconds) && parsedSeconds > 0) {
+            serverMs = Math.ceil(parsedSeconds * 1000)
+          } else {
+            const parsed = Date.parse(retryAfter) - Date.now()
+            if (!Number.isNaN(parsed) && parsed > 0) {
+              serverMs = Math.ceil(parsed)
+            }
+          }
         }
       }
 
@@ -192,7 +195,19 @@ export function policy(opts: {
       if (!retry) return Cause.done(meta.attempt)
       if (meta.attempt > RETRY_MAX_RETRIES) return Cause.done(meta.attempt)
       return Effect.gen(function* () {
-        const wait = delay(meta.attempt, SessionV1.APIError.isInstance(error) ? error : undefined)
+        const apiError = SessionV1.APIError.isInstance(error) ? error : undefined
+        const wait = delay(meta.attempt, apiError)
+        if (apiError) {
+          const headers = apiError.data.responseHeaders
+          const retryAfterMs = headers?.["retry-after-ms"]
+          const retryAfter = headers?.["retry-after"]
+          yield* Effect.logInfo("retry schedule delay", {
+            attempt: meta.attempt,
+            wait,
+            "retry-after-ms": retryAfterMs,
+            "retry-after": retryAfter,
+          })
+        }
         const now = yield* Clock.currentTimeMillis
         yield* opts.set({
           attempt: meta.attempt,

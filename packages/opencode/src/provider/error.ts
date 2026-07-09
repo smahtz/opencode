@@ -20,9 +20,11 @@ export class ResponseStreamError extends Error {
   }
 }
 
-function isOpenAiErrorRetryable(e: APICallError) {
+function isApiErrorRetryable(e: APICallError) {
   const status = e.statusCode
   if (!status) return e.isRetryable
+  // 429 rate limits are always retryable regardless of provider
+  if (status === 429) return true
   // openai sometimes returns 404 for models that are actually available
   return status === 404 || e.isRetryable
 }
@@ -185,7 +187,7 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     type: "api_error",
     message: m,
     statusCode: input.error.statusCode,
-    isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
+    isRetryable: isApiErrorRetryable(input.error),
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,
